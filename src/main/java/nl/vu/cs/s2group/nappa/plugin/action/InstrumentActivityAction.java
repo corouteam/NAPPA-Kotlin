@@ -196,58 +196,42 @@ public class InstrumentActivityAction extends AnAction {
      */
     private void injectLifecycleObserverKt(@NotNull KtFile ktFile) {
         String instrumentedText = "getLifecycle().addObserver(NappaLifecycleObserver(this))";
+
         for (PsiElement child : ktFile.getChildren()) {
             if (child instanceof KtClass) {
                 KtClass ktClass = (KtClass) child;
-                KtClassBody body = ktClass.getBody();
+                List<KtNamedFunction> functions = ktClass.getBody().getFunctions();
 
-                List<KtNamedFunction> functions = body.getFunctions();
-                for (KtNamedFunction function : functions) {
-                    String name = function.getName();
-                    System.out.println("qualcosa");
+                KtNamedFunction onCreateFunction = functions.stream()
+                        .filter(f -> f.getName().equals("onCreate"))
+                        .findFirst()
+                        .orElse(null);
+
+                if (onCreateFunction == null) {
+                    // Case 1. There is no method "onCreate"
+                    // TODO Handle Case 1
+                    System.out.println("Case 1");
+                } else {
+                    KtExpression bodyExpression = onCreateFunction.getBodyExpression();
+                    String onCreateBody = bodyExpression.getText();
+
+                    boolean isEmpty = bodyExpression.getText().isBlank();
+
+                    if (isEmpty) {
+                        // Case 2. There is a method "onCreate" and it an empty body
+                        // Only interfaces and abstracts methods don't have a body.
+                        // The method "onCreate" will always have a body.
+                        // noinspection ConstantConditions
+
+                        // TODO Handle Case 2
+                        System.out.println("Case 2");
+                    } else {
+                        // Case 3. There is a method "onCreate" and it has a non-empty body
+                        // TODO Handle Case 3
+                        System.out.println("Case 3");
+                    }
                 }
-                System.out.println("qualcosa");
-            } else if (child instanceof KtNamedFunction) {
-                KtNamedFunction function = (KtNamedFunction) child;
-                System.out.println("qualcos'altro");
             }
-        }
-
-        PsiClass[] psiClasses = ktFile.getClasses();
-
-        for (PsiClass psiClass : psiClasses) {
-            if (psiClass.getText().contains(instrumentedText)) {
-                resultMessage.incrementAlreadyInstrumentedCount();
-                break;
-            }
-
-            // The library must be initialized only in the file main class
-            //if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
-
-            // There are three cases to inject a lifecycle observer
-            PsiMethod[] psiMethods = psiClass.findMethodsByName("onCreate", false);
-            // Case 1. There is no method "onCreate"
-            if (psiMethods.length == 0) injectLifecycleObserverWithoutOnCreateMethod(psiClass, instrumentedText);
-            else {
-                //KtLightMethod method = (KtLightMethod) psiMethods[0];
-                //PsiCodeBlock block = method.getBody();
-                PsiCodeBlock psiBody = psiMethods[0].getBody();
-                // Case 2. There is a method "onCreate" and it an empty body
-                // Only interfaces and abstracts methods don't have a body.
-                // The method "onCreate" will always have a body.
-                // noinspection ConstantConditions
-                if (psiBody.getStatements().length == 0)
-                    injectLifecycleObserverWithEmptyOnCreateMethod(psiClass, psiBody, instrumentedText);
-                    // Case 3. There is a method "onCreate" and it has a non-empty body
-                else
-                    injectLifecycleObserverWithNonEmptyOnCreateMethod(psiClass, psiBody, instrumentedText);
-
-                resultMessage.incrementInstrumentationCount()
-                        .appendPsiClass(psiClass)
-                        .appendPsiMethod(psiMethods[0])
-                        .appendNewBlock();
-            }
-
         }
     }
 
