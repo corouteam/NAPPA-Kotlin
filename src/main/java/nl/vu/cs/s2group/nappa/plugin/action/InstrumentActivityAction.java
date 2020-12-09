@@ -15,7 +15,7 @@ import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtil;
 import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtilKt;
 import org.jetbrains.annotations.NotNull;
 
-import org.jetbrains.kotlin.asJava.elements.KtLightMethod;
+import org.jetbrains.kotlin.idea.quickfix.crossLanguage.KotlinElementActionsFactory;
 import org.jetbrains.kotlin.psi.*;
 
 import java.util.HashMap;
@@ -42,7 +42,7 @@ public class InstrumentActivityAction extends AnAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         project = e.getProject();
         resultMessage = new InstrumentResultMessage();
-        kotlin();
+        actionPerformedBodyKt();
 
         try {
             getAllJavaFilesWithAnActivity().forEach((activityName, isMainLauncherActivity) -> {
@@ -64,7 +64,7 @@ public class InstrumentActivityAction extends AnAction {
         }
     }
 
-    public void kotlin(){
+    public void actionPerformedBodyKt(){
 
         try {
             getAllJavaFilesWithAnActivity().forEach((activityName, isMainLauncherActivity) -> {
@@ -195,7 +195,7 @@ public class InstrumentActivityAction extends AnAction {
      * @param javaFile The Java file containing the an {@link android.app.Activity}
      */
     private void injectLifecycleObserverKt(@NotNull KtFile ktFile) {
-        String instrumentedText = "getLifecycle().addObserver(NappaLifecycleObserver(this))";
+        String instrumentedText = "lifecycle.addObserver(NappaLifecycleObserver(this))";
 
         for (PsiElement child : ktFile.getChildren()) {
             if (child instanceof KtClass) {
@@ -206,11 +206,15 @@ public class InstrumentActivityAction extends AnAction {
                         .filter(f -> f.getName().equals("onCreate"))
                         .findFirst()
                         .orElse(null);
-
-                if (onCreateFunction == null) {
+/*
+                System.out.println(onCreateFunction.getBodyExpression().getChildren().length);
+                System.out.println(onCreateFunction.getBodyExpression().getChildren()[1].getText());
+*/
+                    if (onCreateFunction == null) {
                     // Case 1. There is no method "onCreate"
                     // TODO Handle Case 1
                     System.out.println("Case 1");
+                        injectLifecycleObserverWithoutOnCreateMethodKt(ktClass, instrumentedText);
                 } else {
                     KtExpression bodyExpression = onCreateFunction.getBodyExpression();
                     String onCreateBody = bodyExpression.getText();
@@ -225,10 +229,12 @@ public class InstrumentActivityAction extends AnAction {
 
                         // TODO Handle Case 2
                         System.out.println("Case 2");
+                        injectLifecycleObserverWithEmptyOnCreateMethodKt(ktClass, onCreateFunction.getBodyBlockExpression(), instrumentedText);
                     } else {
                         // Case 3. There is a method "onCreate" and it has a non-empty body
                         // TODO Handle Case 3
                         System.out.println("Case 3");
+                        injectLifecycleObserverWithNonEmptyOnCreateMethodKt(ktClass, onCreateFunction.getBodyBlockExpression(), instrumentedText);
                     }
                 }
             }
@@ -255,6 +261,27 @@ public class InstrumentActivityAction extends AnAction {
     }
 
     /**
+     * Inject the lifecycle observer to the method {@code onCreate} with empty body to the class
+     *
+     * @param psiClass         Represents a Java class.
+     * @param psiBody          Represents the body of the method {@code onCreate} found in the class
+     * @param instrumentedText Represents the source code to inject
+     */
+    private void injectLifecycleObserverWithEmptyOnCreateMethodKt(KtClass ktClass, KtBlockExpression psiBody, String instrumentedText) {
+        //TODO: implement this
+        String newLine = System.getProperty("line.separator");
+        KtPsiFactory psiFactory = new KtPsiFactory(project);
+        String expressionString = "super.onCreate(savedInstanceState)".concat(newLine)
+                                    .concat(instrumentedText).concat(newLine);
+        KtExpression expression = psiFactory.createBlock(expressionString);
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            psiBody.add(expression);
+        });
+    }
+
+
+    /**
      * Inject the lifecycle observer to the method {@code onCreate} containing existing code to the class
      *
      * @param psiClass         Represents a Java class.
@@ -273,6 +300,31 @@ public class InstrumentActivityAction extends AnAction {
         WriteCommandAction.runWriteCommandAction(project, () -> {
             if (isSuperOnCreate) psiBody.addAfter(instrumentedElement, firstStatement);
             else psiBody.addBefore(instrumentedElement, firstStatement);
+        });
+    }
+
+    /**
+     * Inject the lifecycle observer to the method {@code onCreate} containing existing code to the class
+     *
+     * @param psiClass         Represents a Java class.
+     * @param psiBody          Represents the body of the method {@code onCreate} found in the class
+     * @param instrumentedText Represents the source code to inject
+     */
+    private void injectLifecycleObserverWithNonEmptyOnCreateMethodKt(KtClass ktClass, @NotNull KtBlockExpression psiBody, String instrumentedText) {
+        // If there is a super constructor invocation, is must be in the first line of the method
+        KtExpression firstStatement = psiBody.getFirstStatement();
+        boolean isSuperOnCreate = firstStatement.getText().contains("super.onCreate(");
+        KtPsiFactory psiFactory = new KtPsiFactory(project);
+        KtExpression expression = psiFactory.createExpression(instrumentedText);
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            if (isSuperOnCreate){
+                PsiElement element = psiBody.addAfter(expression, firstStatement);
+                psiBody.addBefore(psiFactory.createNewLine(), element);
+            }
+            else {
+                psiBody.addBefore(expression, firstStatement);
+            }
         });
     }
 
@@ -299,6 +351,33 @@ public class InstrumentActivityAction extends AnAction {
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
             psiClass.add(instrumentedElement);
+        });
+    }
+
+
+    /**
+     * Inject a {@code onCreate} method with the lifecycle observer to the class
+     *
+     * @param psiClass         Represents a Java class.
+     * @param instrumentedText Represents the source code to inject
+     */
+    private void injectLifecycleObserverWithoutOnCreateMethodKt(KtClass psiClass, String instrumentedText) {
+
+        KtPsiFactory psiFactory = new KtPsiFactory(project);
+        String newLine = System.getProperty("line.separator");
+        KtNamedFunction function = psiFactory.createFunction("override fun onCreate(savedInstanceState: Bundle?) {".
+                                                concat(newLine).concat("super.onCreate(savedInstanceState)")
+                                                .concat(newLine).concat(instrumentedText)
+                                                .concat(newLine).concat("}"));
+        //TODO: add logging
+        /*resultMessage.incrementInstrumentationCount()
+                .appendPsiClass((psiClass.getPsiOrParent())
+                .appendOverridePsiMethod(instrumentedElement)
+                .appendNewBlock();
+        */
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            psiClass.addBefore(function, psiClass.getBody().getRBrace());
         });
     }
 
