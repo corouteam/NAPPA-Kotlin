@@ -424,9 +424,8 @@ public class InstrumentActivityAction extends AnAction {
                 break;
             }
 
-            //TODO: convert isMainpublicClass
             // The library must be initialized only in the file main class
-            //if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
+            if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
 
             // There should be exactly a single method named "onCreate" and it should not be empty
             PsiMethod[] psiMethods = psiClass.findMethodsByName("onCreate", false);
