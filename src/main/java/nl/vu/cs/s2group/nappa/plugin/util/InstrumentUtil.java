@@ -9,6 +9,8 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiTreeUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.kotlin.psi.KtClass;
+import org.jetbrains.kotlin.psi.KtModifierList;
 
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -162,6 +164,17 @@ public final class InstrumentUtil {
     public static boolean isMainPublicClass(@NotNull PsiClass psiClass) {
         PsiModifierList classModifier = psiClass.getModifierList();
         return classModifier != null && classModifier.getText().contains("public");
+    }
+
+    /**
+     * Verifies if a class is the main public class
+     *
+     * @param ktClass Represents a Java class or interface.
+     * @return {@code True} if it is the main class or {@code False} otherwise
+     */
+    public static boolean isMainPublicClassKt(@NotNull KtClass ktClass) {
+        KtModifierList classModifier = ktClass.getModifierList();
+        return classModifier == null || classModifier.getText().contains("public");
     }
 
     /**

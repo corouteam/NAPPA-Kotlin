@@ -18,6 +18,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.idea.quickfix.crossLanguage.KotlinElementActionsFactory;
 import org.jetbrains.kotlin.psi.*;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +77,7 @@ public class InstrumentActivityAction extends AnAction {
                     injectLifecycleObserverKt(psiJavaFile);
                     if (Boolean.TRUE.equals(isMainLauncherActivity)) {
                         //resultMessage.incrementPossibleInstrumentationCount();
-                        //addLibraryInitializationStatement(psiJavaFile);
+                        addLibraryInitializationStatementKt(psiJavaFile);
                     }
                 }
             });
@@ -131,8 +132,9 @@ public class InstrumentActivityAction extends AnAction {
                 break;
             }
 
+
             // The library must be initialized only in the file main class
-            //if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
+            if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
 
             // There are three cases to inject a lifecycle observer 
             PsiMethod[] psiMethods = psiClass.findMethodsByName("onCreate", false);
@@ -201,15 +203,20 @@ public class InstrumentActivityAction extends AnAction {
             if (child instanceof KtClass) {
                 KtClass ktClass = (KtClass) child;
                 List<KtNamedFunction> functions = ktClass.getBody().getFunctions();
+                // There is only one initialization per app
+                if (ktClass.getText().contains(instrumentedText)) {
+                    resultMessage.incrementAlreadyInstrumentedCount();
+                    break;
+                }
+
+                // The library must be initialized only in the file main class
+                if (!InstrumentUtil.isMainPublicClassKt(ktClass)) continue;
 
                 KtNamedFunction onCreateFunction = functions.stream()
                         .filter(f -> f.getName().equals("onCreate"))
                         .findFirst()
                         .orElse(null);
-/*
-                System.out.println(onCreateFunction.getBodyExpression().getChildren().length);
-                System.out.println(onCreateFunction.getBodyExpression().getChildren()[1].getText());
-*/
+
                     if (onCreateFunction == null) {
                     // Case 1. There is no method "onCreate"
                     // TODO Handle Case 1
@@ -276,7 +283,7 @@ public class InstrumentActivityAction extends AnAction {
         KtExpression expression = psiFactory.createBlock(expressionString);
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            psiBody.add(expression);
+
         });
     }
 
@@ -323,7 +330,8 @@ public class InstrumentActivityAction extends AnAction {
                 psiBody.addBefore(psiFactory.createNewLine(), element);
             }
             else {
-                psiBody.addBefore(expression, firstStatement);
+                PsiElement element = psiBody.addBefore(expression, firstStatement);
+                psiBody.addAfter(psiFactory.createNewLine(), element);
             }
         });
     }
@@ -406,7 +414,7 @@ public class InstrumentActivityAction extends AnAction {
      * @param javaFile The Java file containing the main launcher {@link android.app.Activity}
      */
     private void addLibraryInitializationStatement(@NotNull PsiJavaFile javaFile) {
-        String instrumentedText = "Nappa.init(this, PrefetchingStrategy.STRATEGY_GREEDY);";
+        String instrumentedText = "Nappa.init(this, PrefetchingStrategyType.STRATEGY_GREEDY_VISIT_FREQUENCY)";
         PsiClass[] psiClasses = javaFile.getClasses();
 
         for (PsiClass psiClass : psiClasses) {
@@ -416,8 +424,9 @@ public class InstrumentActivityAction extends AnAction {
                 break;
             }
 
+            //TODO: convert isMainpublicClass
             // The library must be initialized only in the file main class
-            if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
+            //if (!InstrumentUtil.isMainPublicClass(psiClass)) continue;
 
             // There should be exactly a single method named "onCreate" and it should not be empty
             PsiMethod[] psiMethods = psiClass.findMethodsByName("onCreate", false);
@@ -448,6 +457,86 @@ public class InstrumentActivityAction extends AnAction {
             });
         }
     }
+
+    /**
+     * This method finds the {@code onCreate()} method implemented in the main launcher
+     * {@link android.app.Activity} and insert an instrumented text containing the Prefetching Library
+     * initialization with the default Greedy Prefetching Strategy
+     * <br/><br/>
+     *
+     * <p> The initialization is inserted at the top of the {@code onCreate()} method, after
+     * invoking the super constructor, if present, or before the first statement in the method.
+     * <br/><br/>
+     *
+     * <p> The following source code is instrumented:
+     *
+     * <pre>{@code Prefetch.init(this, PrefetchingStrategy.STRATEGY_GREEDY);}</pre>
+     *
+     * @param javaFile The Java file containing the main launcher {@link android.app.Activity}
+     */
+    private void addLibraryInitializationStatementKt(@NotNull KtFile ktFile) {
+        String instrumentedText = "Nappa.init(this, PrefetchingStrategyType.STRATEGY_GREEDY_VISIT_FREQUENCY)";
+        KtClass[] ktClasses = Arrays.stream(ktFile.getChildren()).filter(child -> child instanceof KtClass).toArray(KtClass[]::new);
+
+        for (KtClass ktClass : ktClasses) {
+            // There is only one initialization per app
+            if (ktClass.getText().contains(instrumentedText)) {
+                resultMessage.incrementAlreadyInstrumentedCount();
+                break;
+            }
+
+
+            // The library must be initialized only in the file main class
+            if (!InstrumentUtil.isMainPublicClassKt(ktClass)) continue;
+
+            // There should be exactly a single method named "onCreate" and it should not be empty
+            List<KtNamedFunction> functions = ktClass.getBody().getFunctions();
+            KtNamedFunction onCreateFunction = functions.stream()
+                    .filter(f -> f.getName().equals("onCreate"))
+                    .findFirst()
+                    .orElse(null);
+
+            if (onCreateFunction == null) break;
+            KtExpression bodyExpression = onCreateFunction.getBodyExpression();
+            String onCreateBody = bodyExpression.getText();
+            boolean isEmpty = bodyExpression.getText().isBlank();
+            if (isEmpty) break;
+
+            // If there is a super constructor invocation, is must be in the first line of the method
+            KtBlockExpression ktBody = onCreateFunction.getBodyBlockExpression();
+            KtExpression firstStatement = ktBody.getFirstStatement();
+            boolean isSuperOnCreate = firstStatement.getText().contains("super.onCreate(");
+
+
+            // This is the Element which contains the statement to connect the
+            // Android application's Main activity to the NAPPA Prefetching Library.
+            // Essentially, we add a statement which initializes Nappa at the very beginning
+            // of the application launch
+
+
+            KtPsiFactory factory = new KtPsiFactory(project);
+            KtExpression expression =  factory.createExpression(instrumentedText);
+
+            //TODO: logging
+            /*resultMessage.incrementInstrumentationCount()
+                    .appendPsiClass(psiClass)
+                    .appendPsiMethod(psiMethods[0])
+                    .appendNewBlock();
+            */
+            WriteCommandAction.runWriteCommandAction(project, () -> {
+                if (isSuperOnCreate){
+                    PsiElement element = ktBody.addAfter(expression, firstStatement);
+                    ktBody.addBefore(factory.createNewLine(), element);
+                }
+                else {
+                    PsiElement element = ktBody.addBefore(expression, firstStatement);
+                    ktBody.addAfter(factory.createNewLine(), element);
+                }
+            });
+        }
+    }
+
+
 
     /**
      * Identify all Java classes that are child of the class {@link android.app.Activity} by scanning
