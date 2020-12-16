@@ -72,12 +72,13 @@ public class InstrumentActivityAction extends AnAction {
                 PsiFile[] psiFiles = FilenameIndex.getFilesByName(project, activityName + ".kt", GlobalSearchScope.projectScope(project));
                 for (PsiFile psiFile : psiFiles) {
                     resultMessage.incrementPossibleInstrumentationCount();
-                    KtFile psiJavaFile = (KtFile) psiFile;
-                    InstrumentUtilKt.addLibraryImportToKt(project, psiJavaFile);
-                    injectLifecycleObserverKt(psiJavaFile);
+                    KtFile ktFile = (KtFile) psiFile;
+                    InstrumentUtilKt.addLibraryImportToKt(project, ktFile);
+                    injectLifecycleObserverKt(ktFile);
                     if (Boolean.TRUE.equals(isMainLauncherActivity)) {
+                        //TODO: ADD LOGGING
                         //resultMessage.incrementPossibleInstrumentationCount();
-                        addLibraryInitializationStatementKt(psiJavaFile);
+                        addLibraryInitializationStatementKt(ktFile);
                     }
                 }
             });
@@ -219,7 +220,6 @@ public class InstrumentActivityAction extends AnAction {
 
                     if (onCreateFunction == null) {
                     // Case 1. There is no method "onCreate"
-                    // TODO Handle Case 1
                     System.out.println("Case 1");
                         injectLifecycleObserverWithoutOnCreateMethodKt(ktClass, instrumentedText);
                 } else {
@@ -239,7 +239,6 @@ public class InstrumentActivityAction extends AnAction {
                         injectLifecycleObserverWithEmptyOnCreateMethodKt(ktClass, onCreateFunction.getBodyBlockExpression(), instrumentedText);
                     } else {
                         // Case 3. There is a method "onCreate" and it has a non-empty body
-                        // TODO Handle Case 3
                         System.out.println("Case 3");
                         injectLifecycleObserverWithNonEmptyOnCreateMethodKt(ktClass, onCreateFunction.getBodyBlockExpression(), instrumentedText);
                     }
@@ -277,10 +276,10 @@ public class InstrumentActivityAction extends AnAction {
     private void injectLifecycleObserverWithEmptyOnCreateMethodKt(KtClass ktClass, KtBlockExpression psiBody, String instrumentedText) {
         //TODO: implement this
         String newLine = System.getProperty("line.separator");
-        KtPsiFactory psiFactory = new KtPsiFactory(project);
+        KtPsiFactory ktPsiFactoryFactory = new KtPsiFactory(project);
         String expressionString = "super.onCreate(savedInstanceState)".concat(newLine)
                                     .concat(instrumentedText).concat(newLine);
-        KtExpression expression = psiFactory.createBlock(expressionString);
+        KtExpression expression = ktPsiFactoryFactory.createBlock(expressionString);
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
 
@@ -321,17 +320,17 @@ public class InstrumentActivityAction extends AnAction {
         // If there is a super constructor invocation, is must be in the first line of the method
         KtExpression firstStatement = psiBody.getFirstStatement();
         boolean isSuperOnCreate = firstStatement.getText().contains("super.onCreate(");
-        KtPsiFactory psiFactory = new KtPsiFactory(project);
-        KtExpression expression = psiFactory.createExpression(instrumentedText);
+        KtPsiFactory ktPsiFactoryFactory = new KtPsiFactory(project);
+        KtExpression expression = ktPsiFactoryFactory.createExpression(instrumentedText);
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
             if (isSuperOnCreate){
                 PsiElement element = psiBody.addAfter(expression, firstStatement);
-                psiBody.addBefore(psiFactory.createNewLine(), element);
+                psiBody.addBefore(ktPsiFactoryFactory.createNewLine(), element);
             }
             else {
                 PsiElement element = psiBody.addBefore(expression, firstStatement);
-                psiBody.addAfter(psiFactory.createNewLine(), element);
+                psiBody.addAfter(ktPsiFactoryFactory.createNewLine(), element);
             }
         });
     }
@@ -371,18 +370,18 @@ public class InstrumentActivityAction extends AnAction {
      */
     private void injectLifecycleObserverWithoutOnCreateMethodKt(KtClass psiClass, String instrumentedText) {
 
-        KtPsiFactory psiFactory = new KtPsiFactory(project);
+        KtPsiFactory ktPsiFactoryFactory = new KtPsiFactory(project);
         String newLine = System.getProperty("line.separator");
-        KtNamedFunction function = psiFactory.createFunction("override fun onCreate(savedInstanceState: Bundle?) {".
+        KtNamedFunction function = ktPsiFactoryFactory.createFunction("override fun onCreate(savedInstanceState: Bundle?) {".
                                                 concat(newLine).concat("super.onCreate(savedInstanceState)")
                                                 .concat(newLine).concat(instrumentedText)
                                                 .concat(newLine).concat("}"));
         //TODO: add logging
         /*resultMessage.incrementInstrumentationCount()
                 .appendPsiClass((psiClass.getPsiOrParent())
-                .appendOverridePsiMethod(instrumentedElement)
-                .appendNewBlock();
-        */
+                .appendOverridePsiMethod()
+                .appendNewBlock();*/
+
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
             psiClass.addBefore(function, psiClass.getBody().getRBrace());
@@ -513,8 +512,8 @@ public class InstrumentActivityAction extends AnAction {
             // of the application launch
 
 
-            KtPsiFactory factory = new KtPsiFactory(project);
-            KtExpression expression =  factory.createExpression(instrumentedText);
+            KtPsiFactory ktPsiFactoryFactory = new KtPsiFactory(project);
+            KtExpression expression =  ktPsiFactoryFactory.createExpression(instrumentedText);
 
             //TODO: logging
             /*resultMessage.incrementInstrumentationCount()
@@ -525,11 +524,11 @@ public class InstrumentActivityAction extends AnAction {
             WriteCommandAction.runWriteCommandAction(project, () -> {
                 if (isSuperOnCreate){
                     PsiElement element = ktBody.addAfter(expression, firstStatement);
-                    ktBody.addBefore(factory.createNewLine(), element);
+                    ktBody.addBefore(ktPsiFactoryFactory.createNewLine(), element);
                 }
                 else {
                     PsiElement element = ktBody.addBefore(expression, firstStatement);
-                    ktBody.addAfter(factory.createNewLine(), element);
+                    ktBody.addAfter(ktPsiFactoryFactory.createNewLine(), element);
                 }
             });
         }

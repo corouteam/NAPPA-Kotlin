@@ -9,8 +9,17 @@ import com.intellij.psi.*;
 import com.intellij.psi.util.PsiTreeUtil;
 import nl.vu.cs.s2group.nappa.plugin.util.InstrumentResultMessage;
 import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtil;
+import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtilKt;
+import org.apache.commons.lang.ObjectUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.kotlin.asJava.elements.KtLightIdentifier;
+import org.jetbrains.kotlin.lexer.KtKeywordToken;
+import org.jetbrains.kotlin.lexer.KtSingleValueToken;
+import org.jetbrains.kotlin.lexer.KtToken;
+import org.jetbrains.kotlin.parsing.KotlinWhitespaceAndCommentsBindersKt;
+import org.jetbrains.kotlin.psi.*;
+import org.jetbrains.kotlin.psi.psiUtil.KtPsiUtilKt;
 
 import java.util.Arrays;
 import java.util.List;
@@ -35,7 +44,7 @@ import java.util.List;
  * startActivity(intent);
  */
 
-public class InstrumentIntentExtrasAction extends AnAction {
+public class InstrumentIntentExtrasActionKt extends AnAction {
     private static final int HAS_NO_INLINE_IF = 0;
     private static final int HAS_INLINE_THEN_BRANCH = 1;
     private static final int HAS_INLINE_ELSE_BRANCH = 2;
@@ -57,19 +66,19 @@ public class InstrumentIntentExtrasAction extends AnAction {
         String[] classFilter = new String[]{"Intent"};
 
         try {
-            List<PsiFile> psiFiles = InstrumentUtil.getAllJavaFilesInProjectAsPsi(project);
-            InstrumentUtil.runScanOnJavaFile(psiFiles, fileFilter, classFilter, this::processPsiStatement);
+            List<PsiFile> psiFiles = InstrumentUtilKt.getAllKotlinFilesInProjectAsPsi(project);
+            InstrumentUtilKt.runScanOnKotlinFile(psiFiles, fileFilter, classFilter, this::processPsiStatement);
             resultMessage.showResultDialog(project, "Intent Extras Instrumentation Result");
         } catch (Exception exception) {
             resultMessage.showErrorDialog(project, exception, "Failed to Instrument Intent Extras");
         }
 
-        (new InstrumentIntentExtrasActionKt()).actionPerformed(event);
+
     }
 
 
 
-    private void processPsiStatement(@NotNull PsiElement rootPsiElement) {
+    private void processPsiStatement(@NotNull KtExpression rootPsiElement) {
         // Defines all variations of the method startActivity in the Android API
         String[] identifierFilter = new String[]{
                 // https://developer.android.com/reference/android/app/Activity#startActivity(android.content.Intent)
@@ -89,28 +98,30 @@ public class InstrumentIntentExtrasAction extends AnAction {
                 // https://developer.android.com/reference/android/app/Activity#startActivityIfNeeded(android.content.Intent,%20int,%20android.os.Bundle)
                 "startActivityIfNeeded",
         };
-
-        rootPsiElement.accept(new JavaRecursiveElementVisitor() {
+        rootPsiElement.accept(new KtTreeVisitorVoid(){
             @Override
-            public void visitElement(PsiElement element) {
-                String elementText = element.getText();
+            public void visitKtElement(@NotNull KtElement element) {
+                String text = element.getText();
                 resultMessage.incrementProcessedElementsCount();
 
                 // This verification is done here to reduce the number of recursive calls
-                if (!element.getText().contains("startActivity")) return;
+                if (!element.getText().contains("startActivity")) return ;
 
-                // Verifies if it is a identifier of a startActivity method
-                if (!(element instanceof PsiIdentifier) || Arrays.stream(identifierFilter).noneMatch(element.getText()::equals)) {
+                // Verifies if it is a identifier of a startActivity method PsiIdentifier
+                if (!(element instanceof KtNameReferenceExpression) || Arrays.stream(identifierFilter).noneMatch(element.getText()::equals)) {
                     super.visitElement(element);
-                    return;
+                    return ;
                 }
 
                 // Verifies if this identifier refers to a method call
-                PsiMethodCallExpression methodCall = PsiTreeUtil.getParentOfType(element, PsiMethodCallExpression.class);
-                if (methodCall == null) return;
+                PsiElement parent =  element.getParent();
+                if (parent == null || !(parent instanceof KtCallExpression)) return ;
 
+                KtCallExpression methodCall = (KtCallExpression) parent;
                 resultMessage.incrementPossibleInstrumentationCount();
 
+                //TODO: translate this
+                /*
                 // Verifies if the startActivity method call is declared inside an inline lambda function
                 // or in a IF statement with an inline THEN or ELSe branches
                 int hasInlineIfStatement = isProcessingInlineIf(methodCall);
@@ -126,15 +137,15 @@ public class InstrumentIntentExtrasAction extends AnAction {
                     if (ifStatement != null && ifStatement.getElseBranch() != null)
                         super.visitElement(ifStatement.getElseBranch());
                 }
+                */
 
-                // Fetches the Intent object sent as parameter in the method startActivity and the statement
-                // element used as reference to instrument non-inline occurrences
-                PsiElement intentParameter = findElementSentAsIntentParameter((PsiIdentifier) element, methodCall);
-                PsiStatement referenceStatement = PsiTreeUtil.getParentOfType(methodCall, PsiStatement.class);
+                KtValueArgument intentParameter = findElementSentAsIntentParameter((KtNameReferenceExpression)element, methodCall);
+                KtExpression referenceStatement = (KtExpression) KtPsiUtil.getParentCallIfPresent(intentParameter.getArgumentExpression());
                 if (referenceStatement == null || intentParameter == null) return;
 
-
-                // Verifies if this element is already instrumented. The requiresToEncapsulateInCodeBlock flag
+                //TODO: Translate this
+                /*
+                 // Verifies if this element is already instrumented. The requiresToEncapsulateInCodeBlock flag
                 // is considered in the verification since any inline block instrumented by this action will
                 // always be replaced with a code block. Thus, if a inline statement is found, the method has
                 // not been instrumented yet. Furthermore, the previous statement of a inline block might contain
@@ -144,34 +155,31 @@ public class InstrumentIntentExtrasAction extends AnAction {
                     resultMessage.incrementAlreadyInstrumentedCount();
                     return;
                 }
-
-                PsiClass psiClass = PsiTreeUtil.getParentOfType(rootPsiElement, PsiClass.class);
+                 */
+                KtClass ktClass = (KtClass) KtPsiUtil.getTopmostParentOfTypes(rootPsiElement, KtClass.class);
                 //noinspection ConstantConditions --> To arrive here we looped through Java clasees
-                InstrumentUtil.addLibraryImport(project, psiClass);
+                InstrumentUtilKt.addLibraryImportToKt(project, ktClass);
+                String instrumentedText = "Nappa.notifyExtras(INTENT.extras)";
 
-                String instrumentedText = "Nappa.notifyExtras(INTENT.getExtras());";
+                //TODO remove this
+                boolean requiresToEncapsulateInCodeBlock = false;
 
+                //TODO: translate injectExtraProbeForVariableReference
                 if (intentParameter instanceof PsiReferenceExpression)
-                    injectExtraProbeForVariableReference(psiClass,
+                    injectExtraProbeForVariableReference(ktClass,
                             referenceStatement,
                             methodCall,
                             (PsiReferenceExpression) intentParameter,
                             instrumentedText,
                             requiresToEncapsulateInCodeBlock);
                 else
-                    injectExtraProbeForMethodCallOrNewExpression(psiClass,
+                    injectExtraProbeForMethodCallOrNewExpression(ktClass,
                             referenceStatement,
                             methodCall,
                             intentParameter,
                             instrumentedText,
                             requiresToEncapsulateInCodeBlock);
-
-                PsiMethod psiMethod = PsiTreeUtil.getParentOfType(rootPsiElement, PsiMethod.class);
-                //noinspection ConstantConditions --> To arrive here we looped through Java methods
-                resultMessage.incrementInstrumentationCount()
-                        .appendPsiClass(psiClass)
-                        .appendPsiMethod(psiMethod)
-                        .appendNewBlock();
+                return;
             }
         });
     }
@@ -217,8 +225,10 @@ public class InstrumentIntentExtrasAction extends AnAction {
      * or {@code null} otherwise
      */
     @Nullable
-    private PsiElement findElementSentAsIntentParameter(@NotNull PsiIdentifier methodIdentifier, PsiMethodCallExpression methodCallExpression) {
+    private KtValueArgument findElementSentAsIntentParameter(@NotNull KtNameReferenceExpression methodIdentifier, KtCallExpression methodCallExpression) {
         // Verifies in which position the method receives a Intent parameter
+
+        //TODO: Translate this
         String[] identifierFilter = new String[]{
                 "startActivityFromChild",
                 "startActivityFromFragment",
@@ -227,12 +237,14 @@ public class InstrumentIntentExtrasAction extends AnAction {
         int currentParameterPosition = 0;
 
         // Fetch the list of parameters
-        PsiExpressionList parameterList = PsiTreeUtil.getChildOfType(methodCallExpression, PsiExpressionList.class);
+        KtValueArgumentList parameterList = methodCallExpression.getValueArgumentList();
         if (parameterList == null) return null;
 
         // Loop through the method parameters list
-        for (PsiElement child : parameterList.getChildren()) {
-            if (!(child instanceof PsiJavaToken || child instanceof PsiWhiteSpace)) {
+        int pSize = parameterList.getArguments().size();
+        for (KtValueArgument child : parameterList.getArguments()) {
+            //if (!(child instanceof KotlinWhitespaceAndCommentsBindersKt || child instanceof PsiWhiteSpace)) {
+            if (true) {
                 currentParameterPosition++;
                 if (currentParameterPosition == parameterPosition) return child;
             }
@@ -264,9 +276,9 @@ public class InstrumentIntentExtrasAction extends AnAction {
      *                           the method {@code startActivity}
      * @param instrumentedText   Represents the template source code to inject
      */
-    private void injectExtraProbeForVariableReference(PsiClass psiClass,
+    private void injectExtraProbeForVariableReference(KtClass psiClass,
                                                       PsiElement referenceStatement,
-                                                      @NotNull PsiMethodCallExpression methodCall,
+                                                      @NotNull KtCallExpression methodCall,
                                                       @NotNull PsiReferenceExpression intentParameter,
                                                       @NotNull String instrumentedText,
                                                       boolean requiresToEncapsulateInCodeBlock) {
@@ -329,27 +341,25 @@ public class InstrumentIntentExtrasAction extends AnAction {
      *                           the method {@code startActivity}
      * @param instrumentedText   Represents the template source code to inject
      */
-    private void injectExtraProbeForMethodCallOrNewExpression(PsiClass psiClass,
+    private void injectExtraProbeForMethodCallOrNewExpression(KtClass psiClass,
                                                               PsiElement referenceStatement,
-                                                              @NotNull PsiMethodCallExpression methodCall,
+                                                              @NotNull KtExpression methodCall,
                                                               @NotNull PsiElement intentParameter,
                                                               @NotNull String instrumentedText,
                                                               boolean requiresToEncapsulateInCodeBlock) {
         // Construct the source code text to inject
-        String variableName = InstrumentUtil.getUniqueVariableName(methodCall, "intent");
-        String intentDeclarationText = "Intent " + variableName + " = " + intentParameter.getText() + ";";
+        String variableName = InstrumentUtilKt.getUniqueVariableName(methodCall, "intent");
         String methodCallText = methodCall.getText().replace(intentParameter.getText(), variableName);
-        methodCallText = methodCallText.replace("\n", "").replaceAll(" {2}", " ");
+
 
         // Construct the elements to inject -- The declaration of an Intent object and the call to the Prefetch Library
-        PsiElement instrumentedElementIntent = PsiElementFactory
-                .getInstance(project)
-                .createStatementFromText(intentDeclarationText, psiClass);
-        PsiElement instrumentedElementLibrary = PsiElementFactory
-                .getInstance(project)
-                .createStatementFromText(instrumentedText.replace("INTENT", variableName), psiClass);
+        KtPsiFactory factory = new KtPsiFactory(project);
+        PsiElement instrumentedElementIntent = factory.createProperty(variableName, "Intent", false,intentParameter.getText());
+        PsiElement instrumentedElementLibrary = factory.createExpression(instrumentedText.replace("INTENT", variableName));
 
+        //TODO: translate this
         // Verifies if we are instrumenting a inline statement
+        /*
         if (requiresToEncapsulateInCodeBlock) {
             injectExtraProbesForInlineLambdaFunction(methodCall, new PsiElement[]{
                     instrumentedElementIntent,
@@ -361,15 +371,17 @@ public class InstrumentIntentExtrasAction extends AnAction {
             return;
         }
 
+         */
+
         // Construct the elements to inject -- The call to the method startActivity
-        PsiElement instrumentedElementMethodCall = PsiElementFactory
-                .getInstance(project)
-                .createStatementFromText(methodCallText, psiClass);
+        PsiElement instrumentedElementMethodCall = factory.createExpression(methodCallText);
 
         // Inject the instrumented notifier of extra changes and the new Intent object
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            referenceStatement.getParent().addBefore(instrumentedElementIntent, referenceStatement);
-            referenceStatement.getParent().addBefore(instrumentedElementLibrary, referenceStatement);
+            PsiElement stat = referenceStatement.getParent().addBefore(instrumentedElementIntent, referenceStatement);
+            referenceStatement.addAfter(factory.createNewLine(),stat );
+            PsiElement stat2 = referenceStatement.getParent().addBefore(instrumentedElementLibrary, referenceStatement);
+            referenceStatement.getParent().addAfter(factory.createNewLine(), stat2);
             methodCall.replace(instrumentedElementMethodCall);
         });
     }
@@ -423,7 +435,7 @@ public class InstrumentIntentExtrasAction extends AnAction {
      * @param methodCall       Represents the startActivity method to instrument
      * @param elementsToInject Represents the list of {@link PsiElement} to inject in this instrumentation
      */
-    private void injectExtraProbesForInlineLambdaFunction(PsiMethodCallExpression methodCall, PsiElement[] elementsToInject) {
+    private void injectExtraProbesForInlineLambdaFunction(KtExpression methodCall, PsiElement[] elementsToInject) {
         // Fetches the ancestor with possible inline statement
         PsiLambdaExpression lambdaExpression = PsiTreeUtil.getParentOfType(methodCall, PsiLambdaExpression.class, false, PsiCodeBlock.class);
         PsiIfStatement ifStatement = PsiTreeUtil.getParentOfType(methodCall, PsiIfStatement.class, false, PsiCodeBlock.class);

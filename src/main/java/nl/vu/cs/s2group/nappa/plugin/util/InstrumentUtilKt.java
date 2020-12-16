@@ -9,9 +9,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiTreeUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.kotlin.psi.KtFile;
-import org.jetbrains.kotlin.psi.KtImportDirective;
-import org.jetbrains.kotlin.psi.KtImportList;
+import org.jetbrains.kotlin.psi.*;
 import org.jetbrains.kotlin.resolve.ImportPath;
 
 import java.util.Arrays;
@@ -55,14 +53,13 @@ public final class InstrumentUtilKt {
         for (String fileName : fileNames) {
             PsiFile[] psiJavaFiles = FilenameIndex.getFilesByName(project, fileName, GlobalSearchScope.projectScope(project));
             // Remove the files from the NAPPA library from the list to process
-            psiJavaFiles = Arrays.stream(psiJavaFiles)
+            PsiFile[] ktFiles = Arrays.stream(psiJavaFiles)
                     .filter(psiJavaFile -> {
-                        String packageName = ((PsiJavaFile) psiJavaFile).getPackageName();
+                        String packageName = ((KtFile) psiJavaFile).getPackageName();
                         return !packageName.contains(NAPPA_PACKAGE_NAME) || packageName.contains(NAPPA_SAMPLE_APP_PACKAGE_NAME);
                     })
                     .toArray(PsiFile[]::new);
-
-            psiFiles.addAll(Arrays.asList(psiJavaFiles));
+            psiFiles.addAll(Arrays.asList(ktFiles));
         }
 
         return psiFiles;
@@ -73,10 +70,10 @@ public final class InstrumentUtilKt {
      * @param psiElement The reference element to add the library import to
      */
     public static void addLibraryImportToKt(Project project, @NotNull PsiElement psiElement) {
-        KtFile psiFile = (KtFile) getAncestorPsiElementFromElement(psiElement, KtFile.class);
+        KtFile ktFile = (KtFile) getAncestorPsiElementFromElement(psiElement, KtFile.class);
 
-        if (psiFile == null) return;
-        KtImportList importList = psiFile.getImportList();
+        if (ktFile == null) return;
+        KtImportList importList = ktFile.getImportList();
         KtImportDirective importDirective = KtPsiFactory(project).createImportDirective(ImportPath.fromString(NAPPA_PACKAGE_NAME+".*"));
         if(importList == null) return;
         AtomicBoolean flag = new AtomicBoolean(false);
@@ -101,35 +98,42 @@ public final class InstrumentUtilKt {
      * @param classFilter Skip all classes that does not contain any of the strings in the provided array
      * @param callback    A callback function invoked for each statement found in all files
      */
-    public static void runScanOnJavaFile(@NotNull List<PsiFile> psiFiles, String[] fileFilter, String[] classFilter, Consumer<PsiElement> callback) {
+    public static void runScanOnKotlinFile(@NotNull List<PsiFile> psiFiles, String[] fileFilter, String[] classFilter, Consumer<KtExpression> callback) {
         for (PsiFile psiFile : psiFiles) {
             if (Arrays.stream(fileFilter).noneMatch(psiFile.getText()::contains)) continue;
-            PsiClass[] psiClasses = ((PsiJavaFile) psiFile).getClasses();
-            for (PsiClass psiClass : psiClasses) {
-                runFullScanOnJavaClass(psiClass, classFilter, callback);
+            KtFile ktFile = (KtFile) psiFile;
+            KtClass[] ktClasses = Arrays.stream(ktFile.getChildren()).filter(child -> child instanceof KtClass).toArray(KtClass[]::new);
+
+            for (KtClass psiClass : ktClasses) {
+                runFullScanOnKotlinClass(psiClass, classFilter, callback);
             }
         }
     }
 
     /**
-     * Auxiliary method for {@link InstrumentUtilKt#runScanOnJavaFile} to be able to scan inner classes
+     * Auxiliary method for {@link InstrumentUtilKt#runScanOnKotlinFile} to be able to scan inner classes
      *
-     * @param psiClass    A Java class
+     * @param ktClass    A Java class
      * @param classFilter Skip all classes that does not contain any of the strings in the provided array
      * @param callback    A callback function invoked for each statement found in all files
      */
-    private static void runFullScanOnJavaClass(@NotNull PsiClass psiClass, String[] classFilter, Consumer<PsiElement> callback) {
-        if (Arrays.stream(classFilter).noneMatch(psiClass.getText()::contains)) return;
+    private static void runFullScanOnKotlinClass(@NotNull KtClass ktClass, String[] classFilter, Consumer<KtExpression> callback) {
+        if (Arrays.stream(classFilter).noneMatch(ktClass.getText()::contains)) return;
+        KtClassBody body = ktClass.getBody();
+        if(body != null){
+            List<KtNamedFunction> functions = ktClass.getBody().getFunctions();
+            for (KtNamedFunction function : functions) {
+                if (function.getBodyExpression() == null) continue;
+                List<KtExpression> ktStatements = function.getBodyBlockExpression().getStatements();
 
-        PsiMethod[] psiMethods = psiClass.getMethods();
-        for (PsiMethod psiMethod : psiMethods) {
-            if (psiMethod.getBody() == null) continue;
-            PsiStatement[] psiStatements = psiMethod.getBody().getStatements();
-            for (PsiStatement statement : psiStatements) {
-                callback.accept(statement);
+                for (KtExpression statement : ktStatements) {
+                    callback.accept(statement);
+                }
             }
         }
 
+        //TODO: implementa
+        /*
         PsiClassInitializer[] psiClassInitializers = psiClass.getInitializers();
         for (PsiClassInitializer psiClassInitializer : psiClassInitializers) {
             for (PsiStatement statement : psiClassInitializer.getBody().getStatements()) {
@@ -142,10 +146,12 @@ public final class InstrumentUtilKt {
             callback.accept(psiField);
         }
 
-        PsiClass[] psiClasses = psiClass.getInnerClasses();
+        KtClass[] innerClasses = Arrays.stream(ktClass.getChildren()).filter(child -> child instanceof KtClass).toArray(KtClass[]::new);
+        KtClass[] ktClasses = Arrays.stream(ktClass.getChildren()).filter(child -> child instanceof KtClass).toArray(KtClass[]::new);
+
         for (PsiClass innerPsiClass : psiClasses) {
-            runFullScanOnJavaClass(innerPsiClass, classFilter, callback);
-        }
+            runFullScanOnKotlinClass(innerPsiClass, classFilter, callback);
+        }*/
     }
 
     /**
@@ -192,16 +198,16 @@ public final class InstrumentUtilKt {
     public static String getUniqueVariableName(PsiElement referenceElement, String variableName) {
         int number = 0;
         String numberAsStr = "";
-        PsiElement elementToSearch = PsiTreeUtil.getParentOfType(referenceElement, PsiMethod.class);
-        if (elementToSearch == null)
-            elementToSearch = PsiTreeUtil.getParentOfType(referenceElement, PsiCodeBlock.class);
-        if (elementToSearch == null) return variableName;
+        PsiElement elementToSearchKt = KtPsiUtil.getTopmostParentOfTypes(referenceElement, KtNamedFunction.class);
+        if (elementToSearchKt == null)
+            elementToSearchKt = KtPsiUtil.getTopmostParentOfTypes(referenceElement, KtBlockExpression.class);
+        if (elementToSearchKt == null) return variableName;
         while (true) {
             String[] variableToSearch = new String[]{
-                    " " + variableName + numberAsStr + "=",
-                    " " + variableName + numberAsStr + " ="
+                    " " + variableName + numberAsStr + ":",
+                    " " + variableName + numberAsStr + ":"
             };
-            if (Arrays.stream(variableToSearch).noneMatch(elementToSearch.getText()::contains))
+            if (Arrays.stream(variableToSearch).noneMatch(elementToSearchKt.getText()::contains))
                 return variableName + numberAsStr;
             number++;
             numberAsStr = Integer.toString(number);
