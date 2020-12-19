@@ -9,6 +9,10 @@ import com.intellij.openapi.ui.Messages;
 import com.intellij.psi.*;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
+import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtil;
+import nl.vu.cs.s2group.nappa.plugin.util.InstrumentUtilKt;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.kotlin.psi.*;
 
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -31,7 +35,7 @@ import java.util.List;
  * .build();
  */
 
-public class InstrumentRetrofitAction extends AnAction {
+public class InstrumentRetrofitActionKt extends AnAction {
     Project project;
     PsiMethod signature;
     StringBuilder displayMessage = new StringBuilder();
@@ -47,7 +51,6 @@ public class InstrumentRetrofitAction extends AnAction {
      */
     @Override
     public void actionPerformed(AnActionEvent event) {
-        (new InstrumentRetrofitActionKt()).actionPerformed(event);
         project = event.getProject();
         boolean retrofitFound = false;
         String[] fileNames = FilenameIndex.getAllFilenames(project);
@@ -66,24 +69,25 @@ public class InstrumentRetrofitAction extends AnAction {
 
         // Iterate all statements inside all project files declaring a new Retrofit Client
         for (PsiFile psiFile : psiFiles) {
-            if (psiFile instanceof PsiJavaFile) {
-                PsiJavaFile javaFile = (PsiJavaFile) psiFile;
-                PsiClass[] psiClasses = javaFile.getClasses();
-
-                for (PsiClass psiClass : psiClasses) {
-                    PsiMethod[] psiMethods = psiClass.getMethods();
-                    for (PsiMethod psiMethod : psiMethods) {
+            if (psiFile instanceof KtFile) {
+                KtFile ktFile = (KtFile) psiFile;
+                KtClass[] ktClasses = Arrays.stream(ktFile.getChildren()).filter(child -> child instanceof KtClass).toArray(KtClass[]::new);
+                for (KtClass ktClass : ktClasses) {
+                    if (ktClass.getBody() == null) continue;
+                    List<KtNamedFunction> functions = ktClass.getBody().getFunctions();
+                    for (KtNamedFunction function : functions) {
                         try {
-                            PsiStatement[] psiStatements = psiMethod.getBody().getStatements();
-                            for (PsiStatement statement : psiStatements) {
+                            KtBlockExpression bodyExpression = function.getBodyBlockExpression();
+                            if (bodyExpression == null) continue;
+                            for (KtExpression statement : bodyExpression.getStatements()) {
 
                                 // Find the retrofit builder
                                 if (statement.getText().contains("Retrofit.Builder")) {
                                     retrofitFound = true;
                                     displayMessage.append("\n Retrofit Definition found in file: ").append(psiFile.getName())
-                                                  .append("\nClass:").append(psiClass.getName())
-                                                  .append("\nMethod:").append(psiMethod.getName());
-
+                                                  .append("\nClass:").append(ktClass.getName())
+                                                  .append("\nMethod:").append(statement.getName());
+                                    InstrumentUtilKt.addLibraryImportToKt(project, ktFile);
                                     // If the current builder instance contains a client specified by the user
                                     if (statement.getText().contains(".client")) {
 
@@ -103,10 +107,32 @@ public class InstrumentRetrofitAction extends AnAction {
                                                       .append("\n Original Statement:\n")
                                                       .append(statement.getText());
 
-                                        final PsiElement clientBuilderElement = PsiElementFactory.SERVICE.getInstance(project)
-                                                .createExpressionFromText(
-                                                        "new Retrofit.Builder().client(Nappa.getOkHttp())", psiClass);
+                                        KtPsiFactory factory = new KtPsiFactory(project);
+                                        final PsiElement clientBuilderElement = factory.createExpression("Builder()\n.client(Nappa.getOkHttp())");
 
+
+                                        statement.accept(new KtTreeVisitorVoid(){
+                                            @Override
+                                            public void visitKtElement(@NotNull KtElement element) {
+                                                // The  "new Retrofit.Builder()" is of PsiNewExpression  type
+
+                                                if (element instanceof KtCallExpression && element.getText().contains("Builder()")) {
+
+                                                    // Inject the instrumented okHttpClient to the Retrofit Client
+                                                    WriteCommandAction.runWriteCommandAction(project, () -> {
+                                                        element.replace(clientBuilderElement);
+
+
+                                                    });
+                                                }
+                                                // Basecase: Only visit elements if the builder has not yet been encountered
+                                                else{
+                                                    super.visitElement(element);
+                                                }
+                                                return;
+                                            }
+
+                                        });
                                         // Considering the expression: new Retrofit.Builder().anotherExpression()...  Iterate recursively until
                                         //    the expression reaches the new Retrofit.Builder() substring
                                         statement.accept(new JavaRecursiveElementVisitor() {
