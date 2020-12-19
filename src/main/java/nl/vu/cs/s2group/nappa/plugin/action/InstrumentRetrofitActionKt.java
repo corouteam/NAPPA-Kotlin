@@ -108,7 +108,7 @@ public class InstrumentRetrofitActionKt extends AnAction {
                                                       .append(statement.getText());
 
                                         KtPsiFactory factory = new KtPsiFactory(project);
-                                        final PsiElement clientBuilderElement = factory.createExpression("Builder()\n.client(Nappa.getOkHttp())");
+                                        final PsiElement clientBuilderElement = factory.createExpression("Builder()\n.client(Nappa.getOkHttp(OkHttpClient()))");
 
 
                                         statement.accept(new KtTreeVisitorVoid(){
