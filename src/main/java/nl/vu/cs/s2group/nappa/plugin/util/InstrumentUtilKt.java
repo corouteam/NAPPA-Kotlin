@@ -70,11 +70,25 @@ public final class InstrumentUtilKt {
      * @param psiElement The reference element to add the library import to
      */
     public static void addLibraryImportToKt(Project project, @NotNull PsiElement psiElement) {
+        addLibraryImportToKt(project, psiElement, NAPPA_PACKAGE_NAME+".*");
+    }
+
+    public  static void addStrategyTypeImportToKt(Project project, @NotNull PsiElement psiElement){
+        addLibraryImportToKt(project, psiElement, NAPPA_PACKAGE_NAME+".prefetch.PrefetchingStrategyType");
+
+    }
+
+
+    /**
+     * @param project    An object representing an IntelliJ project.
+     * @param psiElement The reference element to add the library import to
+     */
+    private static void addLibraryImportToKt(Project project, @NotNull PsiElement psiElement, String importStatement) {
         KtFile ktFile = (KtFile) getAncestorPsiElementFromElement(psiElement, KtFile.class);
 
         if (ktFile == null) return;
         KtImportList importList = ktFile.getImportList();
-        KtImportDirective importDirective = KtPsiFactory(project).createImportDirective(ImportPath.fromString(NAPPA_PACKAGE_NAME+".*"));
+        KtImportDirective importDirective = KtPsiFactory(project).createImportDirective(ImportPath.fromString(importStatement));
         if(importList == null) return;
         AtomicBoolean flag = new AtomicBoolean(false);
         importList.getImports().forEach(directive ->{

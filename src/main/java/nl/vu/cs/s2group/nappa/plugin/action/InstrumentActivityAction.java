@@ -78,6 +78,7 @@ public class InstrumentActivityAction extends AnAction {
                     if (Boolean.TRUE.equals(isMainLauncherActivity)) {
                         //TODO: ADD LOGGING
                         //resultMessage.incrementPossibleInstrumentationCount();
+                        InstrumentUtilKt.addStrategyTypeImportToKt(project, ktFile);
                         addLibraryInitializationStatementKt(ktFile);
                     }
                 }
