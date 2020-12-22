@@ -165,11 +165,12 @@ public class InstrumentIntentExtrasActionKt extends AnAction {
                 boolean requiresToEncapsulateInCodeBlock = false;
 
                 //TODO: translate injectExtraProbeForVariableReference
-                if (intentParameter instanceof PsiReferenceExpression)
+                //intentParameter.getArgumentExpression() = KtNAmeReference Expression
+                if (intentParameter.getArgumentExpression() instanceof KtNameReferenceExpression)
                     injectExtraProbeForVariableReference(ktClass,
                             referenceStatement,
                             methodCall,
-                            (PsiReferenceExpression) intentParameter,
+                            intentParameter,
                             instrumentedText,
                             requiresToEncapsulateInCodeBlock);
                 else
@@ -276,17 +277,22 @@ public class InstrumentIntentExtrasActionKt extends AnAction {
      *                           the method {@code startActivity}
      * @param instrumentedText   Represents the template source code to inject
      */
+
     private void injectExtraProbeForVariableReference(KtClass psiClass,
                                                       PsiElement referenceStatement,
-                                                      @NotNull KtCallExpression methodCall,
-                                                      @NotNull PsiReferenceExpression intentParameter,
+                                                      @NotNull KtExpression methodCall,
+                                                      @NotNull KtValueArgument intentParameter,
                                                       @NotNull String instrumentedText,
                                                       boolean requiresToEncapsulateInCodeBlock) {
         // Construct the element to inject
+        KtPsiFactory factory = new KtPsiFactory(project);
+        PsiElement instrumentedElementLibrary = factory.createExpression(instrumentedText.replace("INTENT", intentParameter.getText()));
+
         PsiElement instrumentedElement = PsiElementFactory
                 .getInstance(project)
                 .createStatementFromText(instrumentedText.replace("INTENT", intentParameter.getText()), psiClass);
 
+        //TODO: translate
         // Verifies if we are instrumenting a inline statement
         if (requiresToEncapsulateInCodeBlock) {
             injectExtraProbesForInlineLambdaFunction(methodCall, new PsiElement[]{
@@ -300,7 +306,8 @@ public class InstrumentIntentExtrasActionKt extends AnAction {
 
         // Inject the instrumented notifier of extra changes
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            referenceStatement.getParent().addBefore(instrumentedElement, referenceStatement);
+            PsiElement stat = referenceStatement.getParent().addBefore(instrumentedElement, referenceStatement);
+            referenceStatement.addAfter(factory.createNewLine(),stat );
         });
     }
 
